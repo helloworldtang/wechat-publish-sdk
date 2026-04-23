@@ -35,22 +35,34 @@ pip install -e .
 
 ## 快速开始
 
-### 1. 初始化客户端
+### 1. 配置环境变量
+
+创建 `.env` 文件（**添加到 .gitignore**）：
+
+```env
+# 服务地址
+WECHAT_PUBLISH_URL=http://localhost:3000
+
+# 签名密钥（从服务端获取）
+SIGNING_KEY=your_signing_key_here
+
+# 默认账号（可选）
+DEFAULT_ACCOUNT=your_account_name
+```
+
+### 2. 初始化客户端
 
 ```python
 import os
+from dotenv import load_dotenv
 from wechat_publish_sdk import WeChatClient
 
-# 方式一：直接指定密钥
-client = WeChatClient(
-    base_url="http://localhost:3000",
-    signing_key="your_signing_key_in_hex",
-    default_account="mingdeng"  # 可选，设置后所有请求无需传 account
-)
+# 加载环境变量
+load_dotenv()
 
-# 方式二：从环境变量读取
+# 初始化客户端
 client = WeChatClient(
-    base_url=os.getenv("WECHAT_PUBLISH_URL", "http://localhost:3000"),
+    base_url=os.getenv("WECHAT_PUBLISH_URL"),
     signing_key=os.getenv("SIGNING_KEY"),
     default_account=os.getenv("DEFAULT_ACCOUNT")
 )
@@ -64,9 +76,9 @@ client = WeChatClient(
 from wechat_publish_sdk import WeChatClient, PublishRequest
 
 client = WeChatClient(
-    base_url="http://localhost:3000",
-    signing_key="your_signing_key_in_hex",
-    default_account="mingdeng"
+    base_url=os.getenv("WECHAT_PUBLISH_URL"),
+    signing_key=os.getenv("SIGNING_KEY"),
+    default_account=os.getenv("DEFAULT_ACCOUNT")
 )
 
 result = client.publish_article(
@@ -91,7 +103,6 @@ else:
 # 步骤1：上传封面
 upload_result = client.upload_image(
     UploadRequest(
-        account="mingdeng",
         file_path="/path/to/cover.jpg"
     )
 )
@@ -124,7 +135,6 @@ else:
 
 ```python
 result = client.list_materials(
-    account="mingdeng",
     material_type="image",
     offset=0,
     count=20
@@ -276,18 +286,32 @@ client = WeChatClient(
 # 服务地址
 WECHAT_PUBLISH_URL=http://localhost:3000
 
-# 签名密钥（十六进制）
-SIGNING_KEY=YOUR_SIGNING_KEY_HERE
+# 签名密钥（从服务端获取，十六进制格式）
+SIGNING_KEY=your_signing_key_here
 
-# 默认账号
-DEFAULT_ACCOUNT=mingdeng
+# 默认账号（可选）
+DEFAULT_ACCOUNT=your_account_name
 ```
+
+**⚠️ 安全注意事项：**
+
+1. **不要提交 .env 文件**：确保 `.env` 已添加到 `.gitignore`
+2. **使用不同密钥**：开发、测试、生产环境使用不同的签名密钥
+3. **定期轮换密钥**：定期更换签名密钥以提高安全性
+4. **权限控制**：设置 `.env` 文件权限为 `600`（仅所有者可读写）
 
 ## 常见问题
 
+### Q: 如何获取签名密钥？
+
+A: 签名密钥由服务端配置，从服务管理员获取。密钥是 64 字节的十六进制字符串。
+
 ### Q: 如何处理签名验证失败？
 
-A: 签名由 SDK 自动处理，确保 `signing_key` 正确即可。
+A: 确保以下几点：
+1. `SIGNING_KEY` 环境变量正确设置
+2. 密钥与服务端完全一致（复制时注意不要有多余空格）
+3. 密钥格式为十六进制字符串
 
 ### Q: 如何获取账号凭证？
 

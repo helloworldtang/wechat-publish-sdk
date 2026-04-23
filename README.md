@@ -19,17 +19,36 @@ pip install wechat-publish-sdk
 
 ## 快速开始
 
-### 初始化客户端
+### 1. 环境变量配置
+
+创建 `.env` 文件（**重要：不要提交到版本控制**）：
+
+```env
+# 服务地址
+WECHAT_PUBLISH_URL=http://localhost:3000
+
+# 签名密钥（从服务端获取）
+SIGNING_KEY=your_signing_key_here
+
+# 默认账号（可选）
+DEFAULT_ACCOUNT=your_account_name
+```
+
+### 2. 初始化客户端
 
 ```python
 import os
+from dotenv import load_dotenv
 from wechat_publish_sdk import WeChatClient
 
+# 加载环境变量
+load_dotenv()
+
 client = WeChatClient(
-    base_url="http://localhost:3000",
+    base_url=os.getenv("WECHAT_PUBLISH_URL"),
     signing_key=os.getenv("SIGNING_KEY"),
-    default_account="mingdeng",  # 可选：设置默认账号
-    api_version="v1"  # 可选：默认 "v1"
+    default_account=os.getenv("DEFAULT_ACCOUNT"),
+    api_version="v1"
 )
 ```
 
@@ -169,6 +188,16 @@ except WeChatPublishError as e:
 
 ## 配置说明
 
+### 环境变量
+
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| WECHAT_PUBLISH_URL | 是 | 后端服务地址 |
+| SIGNING_KEY | 是 | HMAC 签名密钥（从服务端获取）|
+| DEFAULT_ACCOUNT | 否 | 默认账号 |
+
+### 客户端参数
+
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | base_url | str | 是 | 后端服务地址 |
@@ -176,6 +205,16 @@ except WeChatPublishError as e:
 | default_account | str | 否 | 默认账号 |
 | api_version | str | 否 | API 版本，默认 "v1" |
 | timeout | int | 否 | 请求超时（秒），默认 30 |
+
+## 安全建议
+
+⚠️ **重要安全注意事项：**
+
+1. **不要硬编码密钥**：永远不要在代码中硬编码 `SIGNING_KEY`
+2. **使用环境变量**：通过 `.env` 文件或系统环境变量管理密钥
+3. **保护 .env 文件**：确保 `.env` 已添加到 `.gitignore`
+4. **生产环境**：使用密钥管理服务（AWS Secrets Manager、HashiCorp Vault）
+5. **最小权限**：为不同项目使用不同的签名密钥
 
 ## 开发
 
