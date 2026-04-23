@@ -48,6 +48,8 @@ class WeChatClient:
         self.timeout = timeout
         self.session = requests.Session()
         self.session.verify = verify_ssl
+        # 禁用自动代理检测，避免连接到错误的代理
+        self.session.trust_env = False
 
         # 构建端点基础路径
         # 支持无版本前缀的路径（api_version="" 或 None）以适配后端规范
