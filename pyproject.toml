@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wechat-publish-sdk"
-version = "1.0.0"
+version = "1.0.1"
 description = "微信公众号发布服务 Python SDK"
 readme = "README.md"
 requires-python = ">=3.8"
