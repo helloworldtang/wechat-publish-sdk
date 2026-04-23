@@ -31,8 +31,8 @@ class PublishResult:
 @dataclass
 class UploadRequest:
     """上传素材请求"""
-    account: str
-    file_path: str
+    account: str = ""
+    file_path: str = ""
 
 
 @dataclass

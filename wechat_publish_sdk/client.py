@@ -76,7 +76,7 @@ class WeChatClient:
 
     def _get_account(self, account: Optional[str] = None) -> str:
         """获取账号标识，使用默认账号"""
-        if account is None:
+        if not account:  # 处理 None 和空字符串
             if self.default_account is None:
                 raise ValidationError("未指定 account，且未设置 default_account")
             return self.default_account
