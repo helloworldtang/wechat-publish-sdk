@@ -40,3 +40,9 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Local databases / service artifacts (belong to service repo, NOT SDK)
+*.db
+*.sqlite
+*.sqlite3
+migrations/

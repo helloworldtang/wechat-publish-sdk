@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wechat-publish-sdk"
-version = "1.0.1"
+dynamic = ["version"]
 description = "微信公众号发布服务 Python SDK"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "Tang Cheng", email = "tangcheng@example.com"}
+    {name = "Tang Cheng", email = "helloworld.tang@qq.com"}
 ]
-keywords = ["wechat", "publish", "sdk", "api", "mp"]
+keywords = ["wechat", "publish", "sdk", "api", "mp", "oidc"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -39,13 +39,16 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/tangcheng/wechat-publish-service"
-Documentation = "https://github.com/tangcheng/wechat-publish-service#readme"
-Repository = "https://github.com/tangcheng/wechat-publish-service.git"
+Homepage = "https://github.com/helloworldtang/wechat-publish-sdk"
+Documentation = "https://github.com/helloworldtang/wechat-publish-sdk#readme"
+Repository = "https://github.com/helloworldtang/wechat-publish-sdk.git"
+Issues = "https://github.com/helloworldtang/wechat-publish-sdk/issues"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["wechat_publish_sdk*"]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "wechat_publish_sdk.__version__"}
 
 [tool.black]
 line-length = 100

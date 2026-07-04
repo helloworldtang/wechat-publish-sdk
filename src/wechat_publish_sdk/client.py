@@ -1,9 +1,10 @@
 """WeChat Client 核心实现"""
-import hmac
-import hashlib
-import time
 import os
+import secrets
+import time
+import warnings
 from typing import Optional, Dict, Any
+
 import requests
 
 from .models import (
@@ -11,21 +12,28 @@ from .models import (
     MaterialsListResult, RenderRequest, RenderResult
 )
 from .exceptions import (
-    WeChatPublishError, SignatureError, AccountNotFoundError,
-    PublishFailedError, UploadError, ValidationError
+    WeChatPublishError, AccountNotFoundError, ValidationError
 )
+from .oidc import OIDCConfig, OIDCClient
 
 
 class WeChatClient:
     """微信发布服务客户端
 
-    封装了所有与后端服务的交互，包括签名生成、错误处理等。
+    封装了所有与后端服务的交互，包括认证、错误处理等。
+
+    认证方式（三选一，互斥）:
+        - ``api_key``: ``X-API-Key`` 头（推荐，对接 ai-as.cc ``/api/keys/validate``）
+        - ``oidc``: ``Authorization: Bearer`` 头（OIDC ``client_credentials``，对接 auth.ai-as.cc）
+        - ``signing_key``: 旧版 HMAC 签名（已废弃，仅为兼容保留，service 已不校验）
     """
 
     def __init__(
         self,
         base_url: str,
-        signing_key: str,
+        signing_key: Optional[str] = None,
+        api_key: Optional[str] = None,
+        oidc: Optional[OIDCConfig] = None,
         default_account: Optional[str] = None,
         api_version: str = "v1",
         timeout: int = 30,
@@ -34,15 +42,16 @@ class WeChatClient:
         """初始化客户端
 
         Args:
-            base_url: 后端服务地址，如 http://localhost:3000
-            signing_key: HMAC 签名密钥（十六进制字符串）
+            base_url: 后端服务地址，如 https://yyps.net
+            signing_key: HMAC 签名密钥（已废弃，建议改用 api_key 或 oidc）
+            api_key: API Key（推荐，对应 X-API-Key 头）
+            oidc: OIDC 配置（OIDCConfig，对应 Authorization: Bearer 头）
             default_account: 默认账号，所有请求可省略 account 参数
-            api_version: API 版本，默认 "v1"
+            api_version: API 版本，默认 "v1"；传 "" 或 "default" 使用无版本前缀路径
             timeout: 请求超时时间（秒）
             verify_ssl: 是否验证 SSL 证书
         """
         self.base_url = base_url.rstrip('/')
-        self.signing_key = bytes.fromhex(signing_key)
         self.default_account = default_account
         self.api_version = api_version
         self.timeout = timeout
@@ -51,28 +60,42 @@ class WeChatClient:
         # 禁用自动代理检测，避免连接到错误的代理
         self.session.trust_env = False
 
+        # 认证方式初始化（三选一，互斥）
+        self.api_key: Optional[str] = None
+        self.signing_key: Optional[str] = None
+        self._oidc_client: Optional[OIDCClient] = None
+
+        if oidc is not None:
+            self._oidc_client = OIDCClient(oidc, session=self.session, timeout=timeout)
+        elif api_key:
+            self.api_key = api_key
+        elif signing_key:
+            warnings.warn(
+                "signing_key 已废弃：service 侧不再校验 HMAC 签名，"
+                "请改用 api_key 或 oidc 认证。",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.signing_key = signing_key  # 仅留存，不再用于生成签名
+        else:
+            raise ValidationError("必须提供 api_key、oidc 或 signing_key 之一")
+
         # 构建端点基础路径
         # 支持无版本前缀的路径（api_version="" 或 None）以适配后端规范
         if api_version and api_version not in ("", "default"):
             self.endpoint_base = f"{self.base_url}/api/{api_version}/mp"
         else:
-            # 使用标准路径 /api/mp/（符合 API_SPECIFICATION.md）
             self.endpoint_base = f"{self.base_url}/api/mp"
 
-    def _make_signature(self, account: str, timestamp: int, body_hash: str) -> str:
-        """生成 HMAC-SHA256 签名
-
-        Args:
-            account: 账号标识
-            timestamp: Unix 时间戳
-            body_hash: 内容 SHA256 哈希
-
-        Returns:
-            十六进制签名字符串
-        """
-        data = f"{account}{timestamp}{body_hash}"
-        mac = hmac.new(self.signing_key, data.encode(), hashlib.sha256)
-        return mac.hexdigest()
+    def _build_auth_headers(self) -> Dict[str, str]:
+        """根据当前认证方式构建请求头"""
+        if self._oidc_client is not None:
+            token = self._oidc_client.get_valid_token()
+            return {"Authorization": f"Bearer {token}"}
+        if self.api_key:
+            return {"X-API-Key": self.api_key}
+        # signing_key 模式：service 已不校验签名，不附加认证头
+        return {}
 
     def _get_account(self, account: Optional[str] = None) -> str:
         """获取账号标识，使用默认账号"""
@@ -111,6 +134,11 @@ class WeChatClient:
         if response.status_code == 404:
             raise AccountNotFoundError(data.get("message", "接口不存在"))
 
+        if response.status_code == 401 or response.status_code == 403:
+            raise WeChatPublishError(
+                f"认证失败 ({response.status_code}): {data.get('message', response.text)}"
+            )
+
         if response.status_code >= 500:
             raise WeChatPublishError(f"服务器错误: {data.get('message', response.text)}")
 
@@ -132,7 +160,6 @@ class WeChatClient:
 
         Raises:
             ValidationError: 参数验证失败
-            SignatureError: 签名生成失败
             PublishFailedError: 发布失败
         """
         # 验证必填参数
@@ -141,21 +168,17 @@ class WeChatClient:
 
         account = self._get_account(request.account)
         timestamp = int(time.time())
-
-        # 计算 body_hash: sha256(title + content)
-        body_hash_input = f"{request.title}{request.content}"
-        body_hash = hashlib.sha256(body_hash_input.encode()).hexdigest()
-
-        # 生成签名
-        signature = self._make_signature(account, timestamp, body_hash)
+        nonce = secrets.token_hex(16)
+        expires_at = timestamp + 300  # 5 分钟过期
 
         # 构建请求体
-        payload = {
+        payload: Dict[str, Any] = {
             "account": account,
             "title": request.title,
             "content": request.content,
             "timestamp": timestamp,
-            "signature": signature
+            "nonce": nonce,
+            "expires_at": expires_at
         }
 
         # 可选参数
@@ -176,11 +199,11 @@ class WeChatClient:
         if request.only_fans_can_comment is not None:
             payload["only_fans_can_comment"] = request.only_fans_can_comment
 
-        # 发送请求
         url = f"{self.endpoint_base}/publish"
         response = self.session.post(
             url,
             json=payload,
+            headers=self._build_auth_headers(),
             timeout=self.timeout
         )
 
@@ -211,25 +234,27 @@ class WeChatClient:
 
         account = self._get_account(request.account)
         timestamp = int(time.time())
+        nonce = secrets.token_hex(16)
+        expires_at = timestamp + 300
 
-        # 上传接口的 body_hash 固定为 "upload"
-        body_hash = "upload"
-        signature = self._make_signature(account, timestamp, body_hash)
+        # 构建请求数据
+        data = {
+            "account": account,
+            "timestamp": str(timestamp),
+            "nonce": nonce,
+            "expires_at": str(expires_at)
+        }
 
         # 发送 multipart/form-data 请求
         url = f"{self.endpoint_base}/materials/upload"
         with open(request.file_path, "rb") as f:
             files = {"file": f}
-            data = {
-                "account": account,
-                "timestamp": str(timestamp),
-                "signature": signature
-            }
 
             response = self.session.post(
                 url,
                 files=files,
                 data=data,
+                headers=self._build_auth_headers(),
                 timeout=self.timeout
             )
 
@@ -261,18 +286,12 @@ class WeChatClient:
             素材列表结果
         """
         account = self._get_account(account)
-        timestamp = int(time.time())
-
-        # list 接口的 body_hash 为 material_type
-        body_hash = material_type
-        signature = self._make_signature(account, timestamp, body_hash)
 
         url = f"{self.endpoint_base}/materials/list"
         payload = {
             "account": account,
             "material_type": material_type,
-            "timestamp": timestamp,
-            "signature": signature,
+            "timestamp": int(time.time()),
             "offset": offset,
             "count": min(count, 20)
         }
@@ -280,6 +299,7 @@ class WeChatClient:
         response = self.session.post(
             url,
             json=payload,
+            headers=self._build_auth_headers(),
             timeout=self.timeout
         )
 

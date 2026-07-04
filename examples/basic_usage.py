@@ -1,94 +1,78 @@
-"""基础使用示例"""
+"""基础使用示例
+
+演示 API Key 与 OIDC 两种 M2M 认证方式。运行前设置环境变量：
+  - WECHAT_PUBLISH_URL（默认 https://yyps.net）
+  - API_KEY（方式一），或 OIDC_CLIENT_ID + OIDC_CLIENT_SECRET（方式二）
+  - DEFAULT_ACCOUNT（默认 mingdeng）
+"""
 import os
-from wechat_publish_sdk import WeChatClient, PublishRequest, UploadRequest, RenderRequest
+
+from wechat_publish_sdk import (
+    WeChatClient, PublishRequest, RenderRequest, OIDCConfig,
+)
+
+
+def build_client() -> WeChatClient:
+    """根据环境变量选择认证方式构建客户端"""
+    base_url = os.getenv("WECHAT_PUBLISH_URL", "https://yyps.net")
+    default_account = os.getenv("DEFAULT_ACCOUNT", "mingdeng")
+
+    if os.getenv("OIDC_CLIENT_ID") and os.getenv("OIDC_CLIENT_SECRET"):
+        # 方式二：OIDC（client_credentials）
+        return WeChatClient(
+            base_url=base_url,
+            oidc=OIDCConfig(
+                client_id=os.environ["OIDC_CLIENT_ID"],
+                client_secret=os.environ["OIDC_CLIENT_SECRET"],
+            ),
+            default_account=default_account,
+        )
+
+    # 方式一：API Key（默认推荐）
+    return WeChatClient(
+        base_url=base_url,
+        api_key=os.getenv("API_KEY", "sk_live_xxx"),
+        default_account=default_account,
+    )
 
 
 def main():
-    # 初始化客户端
-    client = WeChatClient(
-        base_url="http://localhost:3000",
-        signing_key=os.getenv("SIGNING_KEY", "0000000000000000000000000000000000000000000000000000000000000000"),
-        default_account="mingdeng",
-        api_version="v1"
-    )
+    client = build_client()
 
     print("=== 示例 1: 基本发布 ===")
     try:
         result = client.publish_article(
             PublishRequest(
                 title="SDK 测试文章",
-                content="# 这是通过 SDK 发布的文章\n\n欢迎使用 WeChat Publish SDK！"
+                content="# 通过 SDK 发布\n\n欢迎使用 WeChat Publish SDK！",
             )
         )
-        if result.success:
-            print(f"✅ 发布成功，draft_id: {result.draft_id}")
-        else:
-            print(f"❌ 发布失败: {result.message}")
+        status = "✅" if result.success else "❌"
+        print(f"{status} {result.message} draft_id={result.draft_id}")
     except Exception as e:
         print(f"❌ 错误: {e}")
 
-    print("\n=== 示例 2: 带封面的发布 ===")
+    print("\n=== 示例 2: 查询素材列表 ===")
     try:
-        # 注意：实际使用时需要提供真实的图片路径
-        upload_result = client.upload_image(
-            UploadRequest(
-                account="mingdeng",
-                file_path="/tmp/test_cover.jpg"
-            )
-        )
-
-        if upload_result.success:
-            media_id = upload_result.media_id
-            print(f"✅ 封面上传成功，media_id: {media_id}")
-
-            result = client.publish_article(
-                PublishRequest(
-                    title="带封面的文章",
-                    content="# 文章内容\n\n这里是正文...",
-                    thumb_media_id=media_id,
-                    show_cover_pic=1,
-                    author="SDK 作者",
-                    digest="这是文章摘要"
-                )
-            )
-            if result.success:
-                print(f"✅ 文章发布成功，draft_id: {result.draft_id}")
-        else:
-            print(f"❌ 封面上传失败: {upload_result.message}")
-    except Exception as e:
-        print(f"❌ 错误: {e}")
-
-    print("\n=== 示例 3: 查询素材列表 ===")
-    try:
-        result = client.list_materials(
-            account="mingdeng",
-            material_type="image",
-            offset=0,
-            count=5
-        )
+        result = client.list_materials(material_type="image", offset=0, count=5)
         if result.success:
-            print(f"✅ 共 {result.total_count} 个素材，当前显示 {result.item_count} 个")
+            print(f"✅ 共 {result.total_count} 个素材")
             for item in result.items[:3]:
                 print(f"  - {item.media_id}: {item.name}")
         else:
-            print(f"❌ 查询失败: {result.message}")
+            print(f"❌ {result.message}")
     except Exception as e:
         print(f"❌ 错误: {e}")
 
-    print("\n=== 示例 4: Markdown 渲染 ===")
+    print("\n=== 示例 3: Markdown 渲染 ===")
     try:
         result = client.render_markdown(
-            RenderRequest(
-                content="# 标题\n\n这是测试内容\n\n- 列表1\n- 列表2",
-                theme="orange"
-            )
+            RenderRequest(content="# 标题\n\n内容", theme="orange")
         )
+        status = "✅" if result.success else "❌"
+        print(f"{status} {result.message}")
         if result.success:
-            print("✅ 渲染成功")
-            print("HTML 内容:")
-            print(result.html[:200] + "..." if len(result.html) > 200 else result.html)
-        else:
-            print(f"❌ 渲染失败: {result.message}")
+            print(result.html[:200])
     except Exception as e:
         print(f"❌ 错误: {e}")
 
