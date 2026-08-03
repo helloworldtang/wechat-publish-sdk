@@ -17,6 +17,10 @@ class PublishRequest:
     digest: Optional[str] = field(default=None)
     need_open_comment: int = field(default=1)
     only_fans_can_comment: int = field(default=0)
+    # 封面策略(对齐后端 cover 枚举):"ai"|"auto"|"provided"|"none";不传则后端默认 ai
+    cover: Optional[str] = field(default=None)
+    # AI 封面画面 prompt(cover="ai" 时生效):直传则原样出图,不传则服务端 LLM 提炼
+    cover_image_prompt: Optional[str] = field(default=None)
 
 
 @dataclass

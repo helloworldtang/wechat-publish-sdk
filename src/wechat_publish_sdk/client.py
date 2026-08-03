@@ -198,6 +198,10 @@ class WeChatClient:
             payload["need_open_comment"] = request.need_open_comment
         if request.only_fans_can_comment is not None:
             payload["only_fans_can_comment"] = request.only_fans_can_comment
+        if request.cover:
+            payload["cover"] = request.cover
+        if request.cover_image_prompt:
+            payload["cover_image_prompt"] = request.cover_image_prompt
 
         url = f"{self.endpoint_base}/publish"
         response = self.session.post(

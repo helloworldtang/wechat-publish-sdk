@@ -111,6 +111,24 @@ class TestWeChatClient:
         assert kwargs["headers"]["X-API-Key"] == "sk_live_test"
 
     @patch("wechat_publish_sdk.client.requests.Session.post")
+    def test_publish_article_with_cover(self, mock_post):
+        """cover=ai 时 cover + cover_image_prompt 进 payload"""
+        mock_post.return_value = Mock(
+            status_code=200,
+            json=lambda: {"success": True, "message": "ok", "draft_id": "d_cover"},
+        )
+        client = WeChatClient(base_url=BASE_URL, api_key="k", default_account="t")
+        client.publish_article(
+            PublishRequest(
+                title="t", content="c", cover="ai", cover_image_prompt="极简几何封面"
+            )
+        )
+        _, kwargs = mock_post.call_args
+        payload = kwargs["json"]
+        assert payload["cover"] == "ai"
+        assert payload["cover_image_prompt"] == "极简几何封面"
+
+    @patch("wechat_publish_sdk.client.requests.Session.post")
     def test_publish_article_with_oidc_bearer_header(self, mock_post):
         """OIDC 模式发布，请求携带 Authorization: Bearer"""
         mock_post.return_value = Mock(
