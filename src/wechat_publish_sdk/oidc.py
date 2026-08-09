@@ -6,10 +6,11 @@
 SDK 使用方通常无需直接操作本模块——在构造 :class:`WeChatClient` 时
 传入 :class:`OIDCConfig` 即可启用 Bearer 认证。
 """
+
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -58,7 +59,7 @@ class OIDCClient:
         config: OIDCConfig,
         session: Optional[requests.Session] = None,
         timeout: int = 10,
-    ):
+    ) -> None:
         self.config = config
         self.timeout = timeout
         # 复用主 client 的 Session 以共享连接池与 trust_env 策略
@@ -81,8 +82,8 @@ class OIDCClient:
             )
         try:
             doc = resp.json()
-        except ValueError:
-            raise AuthenticationError("OIDC discovery 返回非 JSON 响应")
+        except ValueError as error:
+            raise AuthenticationError("OIDC discovery 返回非 JSON 响应") from error
         endpoint = doc.get("token_endpoint")
         if not endpoint:
             raise AuthenticationError("OIDC discovery 文档缺少 token_endpoint")
@@ -110,8 +111,8 @@ class OIDCClient:
             )
         try:
             payload = resp.json()
-        except ValueError:
-            raise AuthenticationError("token 端点返回非 JSON 响应")
+        except ValueError as error:
+            raise AuthenticationError("token 端点返回非 JSON 响应") from error
         if "access_token" not in payload:
             raise AuthenticationError(f"token 响应缺少 access_token: {payload}")
         return payload

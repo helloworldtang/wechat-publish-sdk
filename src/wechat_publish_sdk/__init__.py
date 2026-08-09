@@ -26,28 +26,28 @@ OIDC 认证（可选）::
 """
 
 from .client import WeChatClient
+from .exceptions import (
+    AccountNotFoundError,
+    AuthenticationError,
+    PublishFailedError,
+    SignatureError,
+    UploadError,
+    ValidationError,
+    WeChatPublishError,
+)
 from .models import (
+    MaterialItem,
+    MaterialsListResult,
     PublishRequest,
     PublishResult,
+    RenderRequest,
+    RenderResult,
     UploadRequest,
     UploadResult,
-    MaterialsListResult,
-    MaterialItem,
-    RenderRequest,
-    RenderResult
-)
-from .exceptions import (
-    WeChatPublishError,
-    SignatureError,
-    AuthenticationError,
-    AccountNotFoundError,
-    PublishFailedError,
-    UploadError,
-    ValidationError
 )
 from .oidc import OIDCConfig, OIDCClient
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 __all__ = [
     "WeChatClient",

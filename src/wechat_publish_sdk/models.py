@@ -1,11 +1,13 @@
-"""数据模型定义"""
+"""WeChat Publish API 的请求和响应数据模型。"""
+
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List, Optional
 
 
 @dataclass
 class PublishRequest:
-    """发布文章请求"""
+    """发布文章请求。"""
+
     account: str = field(default="")
     title: str = field(default="")
     content: str = field(default="")
@@ -19,29 +21,39 @@ class PublishRequest:
     only_fans_can_comment: int = field(default=0)
     # 封面策略(对齐后端 cover 枚举):"ai"|"auto"|"provided"|"none";不传则后端默认 ai
     cover: Optional[str] = field(default=None)
-    # AI 封面画面 prompt(cover="ai" 时生效):直传则原样出图,不传则服务端 LLM 提炼
+    # AI 封面画面 prompt：cover="ai" 时生效，不传则服务端 LLM 提炼
     cover_image_prompt: Optional[str] = field(default=None)
+    # 稳定业务幂等键，建议使用 "article-id:revision" 格式
+    idempotency_key: Optional[str] = field(default=None)
+    # 跳过服务端判重，强制创建新草稿
+    force_publish: bool = field(default=False)
 
 
 @dataclass
 class PublishResult:
-    """发布结果"""
+    """发布结果，包含草稿标识和判重状态。"""
+
     success: bool
     message: str
     draft_id: Optional[str] = None
     error_code: Optional[str] = None
+    duplicate: bool = False
+    duplicate_of: Optional[int] = None
+    duplicate_status: Optional[str] = None
 
 
 @dataclass
 class UploadRequest:
-    """上传素材请求"""
+    """上传素材请求。"""
+
     account: str = ""
     file_path: str = ""
 
 
 @dataclass
 class UploadResult:
-    """上传结果"""
+    """上传结果。"""
+
     success: bool
     message: str
     media_id: Optional[str] = None
@@ -51,7 +63,8 @@ class UploadResult:
 
 @dataclass
 class MaterialItem:
-    """素材项"""
+    """微信素材项。"""
+
     media_id: str
     name: str
     url: str
@@ -61,18 +74,20 @@ class MaterialItem:
 
 @dataclass
 class MaterialsListResult:
-    """素材列表结果"""
+    """素材列表结果。"""
+
     success: bool
     message: str
     total_count: int = 0
     item_count: int = 0
-    items: List[MaterialItem] = None
+    items: Optional[List[MaterialItem]] = None
     error_code: Optional[str] = None
 
 
 @dataclass
 class RenderRequest:
-    """渲染请求"""
+    """Markdown 渲染请求。"""
+
     content: str
     theme: str = "default"
     enable_highlight: bool = True
@@ -80,7 +95,8 @@ class RenderRequest:
 
 @dataclass
 class RenderResult:
-    """渲染结果"""
+    """内容渲染结果。"""
+
     success: bool
     html: str = ""
     message: str = ""

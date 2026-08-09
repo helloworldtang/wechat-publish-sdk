@@ -1,18 +1,22 @@
-"""WeChat Client 核心实现"""
+"""WeChat Publish 服务的同步 HTTP 客户端。"""
+
 import os
 import secrets
 import time
 import warnings
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 import requests
 
+from .exceptions import AccountNotFoundError, ValidationError, WeChatPublishError
 from .models import (
-    PublishRequest, PublishResult, UploadRequest, UploadResult,
-    MaterialsListResult, RenderRequest, RenderResult
-)
-from .exceptions import (
-    WeChatPublishError, AccountNotFoundError, ValidationError
+    MaterialsListResult,
+    PublishRequest,
+    PublishResult,
+    RenderRequest,
+    RenderResult,
+    UploadRequest,
+    UploadResult,
 )
 from .oidc import OIDCConfig, OIDCClient
 
@@ -24,8 +28,10 @@ class WeChatClient:
 
     认证方式（三选一，互斥）:
         - ``api_key``: ``X-API-Key`` 头（推荐，对接 ai-as.cc ``/api/keys/validate``）
-        - ``oidc``: ``Authorization: Bearer`` 头（OIDC ``client_credentials``，对接 auth.ai-as.cc）
-        - ``signing_key``: 旧版 HMAC 签名（已废弃，仅为兼容保留，service 已不校验）
+        - ``oidc``: ``Authorization: Bearer`` 头
+          （OIDC ``client_credentials``，对接 auth.ai-as.cc）
+        - ``signing_key``: 旧版 HMAC 签名
+          （已废弃，仅为兼容保留，service 已不校验）
     """
 
     def __init__(
@@ -37,8 +43,8 @@ class WeChatClient:
         default_account: Optional[str] = None,
         api_version: str = "v1",
         timeout: int = 30,
-        verify_ssl: bool = True
-    ):
+        verify_ssl: bool = True,
+    ) -> None:
         """初始化客户端
 
         Args:
@@ -51,7 +57,7 @@ class WeChatClient:
             timeout: 请求超时时间（秒）
             verify_ssl: 是否验证 SSL 证书
         """
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip("/")
         self.default_account = default_account
         self.api_version = api_version
         self.timeout = timeout
@@ -105,12 +111,11 @@ class WeChatClient:
             return self.default_account
         return account
 
-    def _handle_response(self, response: requests.Response, success_msg: str = "操作成功") -> Dict[str, Any]:
+    def _handle_response(self, response: requests.Response) -> Dict[str, Any]:
         """处理响应，统一错误处理
 
         Args:
             response: requests.Response 对象
-            success_msg: 成功时的默认消息
 
         Returns:
             解析后的 JSON 数据
@@ -120,21 +125,20 @@ class WeChatClient:
         """
         try:
             data = response.json()
-        except ValueError:
+        except ValueError as error:
             # 服务返回了非 JSON 响应（如 HTML 错误页面）
             if response.status_code == 404:
-                raise AccountNotFoundError("接口不存在或路径错误")
-            elif response.status_code == 422:
-                raise ValidationError(f"参数格式错误: {response.text[:100]}")
-            elif response.status_code >= 500:
-                raise WeChatPublishError(f"服务器错误: {response.text[:100]}")
-            else:
-                raise WeChatPublishError(f"响应解析失败: {response.text[:100]}")
+                raise AccountNotFoundError("接口不存在或路径错误") from error
+            if response.status_code == 422:
+                raise ValidationError(f"参数格式错误: {response.text[:100]}") from error
+            if response.status_code >= 500:
+                raise WeChatPublishError(f"服务器错误: {response.text[:100]}") from error
+            raise WeChatPublishError(f"响应解析失败: {response.text[:100]}") from error
 
         if response.status_code == 404:
             raise AccountNotFoundError(data.get("message", "接口不存在"))
 
-        if response.status_code == 401 or response.status_code == 403:
+        if response.status_code in (401, 403):
             raise WeChatPublishError(
                 f"认证失败 ({response.status_code}): {data.get('message', response.text)}"
             )
@@ -148,6 +152,40 @@ class WeChatClient:
             raise WeChatPublishError(f"{msg} (错误码: {error_code})")
 
         return data
+
+    def _build_publish_payload(self, request: PublishRequest, account: str) -> Dict[str, Any]:
+        """构建发布请求体，仅包含调用方显式启用的可选字段。"""
+        timestamp = int(time.time())
+        payload: Dict[str, Any] = {
+            "account": account,
+            "title": request.title,
+            "content": request.content,
+            "timestamp": timestamp,
+            "nonce": secrets.token_hex(16),
+            "expires_at": timestamp + 300,
+        }
+        optional_fields = {
+            "thumb_media_id": request.thumb_media_id,
+            "content_format": request.content_format,
+            "theme": request.theme,
+            "author": request.author,
+            "digest": request.digest,
+            "show_cover_pic": request.show_cover_pic,
+            "need_open_comment": request.need_open_comment,
+            "only_fans_can_comment": request.only_fans_can_comment,
+            "cover": request.cover,
+            "cover_image_prompt": request.cover_image_prompt,
+            "idempotency_key": request.idempotency_key,
+        }
+        populated_fields = {
+            key: value
+            for key, value in optional_fields.items()
+            if value is not None and value != ""
+        }
+        payload.update(populated_fields)
+        if request.force_publish:
+            payload["force_publish"] = True
+        return payload
 
     def publish_article(self, request: PublishRequest) -> PublishResult:
         """发布文章到微信公众号草稿箱
@@ -167,48 +205,14 @@ class WeChatClient:
             raise ValidationError("title 和 content 不能为空")
 
         account = self._get_account(request.account)
-        timestamp = int(time.time())
-        nonce = secrets.token_hex(16)
-        expires_at = timestamp + 300  # 5 分钟过期
-
-        # 构建请求体
-        payload: Dict[str, Any] = {
-            "account": account,
-            "title": request.title,
-            "content": request.content,
-            "timestamp": timestamp,
-            "nonce": nonce,
-            "expires_at": expires_at
-        }
-
-        # 可选参数
-        if request.thumb_media_id:
-            payload["thumb_media_id"] = request.thumb_media_id
-        if request.content_format:
-            payload["content_format"] = request.content_format
-        if request.theme:
-            payload["theme"] = request.theme
-        if request.author:
-            payload["author"] = request.author
-        if request.digest:
-            payload["digest"] = request.digest
-        if request.show_cover_pic is not None:
-            payload["show_cover_pic"] = request.show_cover_pic
-        if request.need_open_comment is not None:
-            payload["need_open_comment"] = request.need_open_comment
-        if request.only_fans_can_comment is not None:
-            payload["only_fans_can_comment"] = request.only_fans_can_comment
-        if request.cover:
-            payload["cover"] = request.cover
-        if request.cover_image_prompt:
-            payload["cover_image_prompt"] = request.cover_image_prompt
+        payload = self._build_publish_payload(request, account)
 
         url = f"{self.endpoint_base}/publish"
         response = self.session.post(
             url,
             json=payload,
             headers=self._build_auth_headers(),
-            timeout=self.timeout
+            timeout=self.timeout,
         )
 
         data = self._handle_response(response)
@@ -216,7 +220,11 @@ class WeChatClient:
         return PublishResult(
             success=data.get("success", False),
             message=data.get("message", ""),
-            draft_id=data.get("draft_id")
+            draft_id=data.get("draft_id"),
+            error_code=data.get("error_code"),
+            duplicate=data.get("duplicate", False),
+            duplicate_of=data.get("duplicate_of"),
+            duplicate_status=data.get("duplicate_status"),
         )
 
     def upload_image(self, request: UploadRequest) -> UploadResult:
@@ -246,7 +254,7 @@ class WeChatClient:
             "account": account,
             "timestamp": str(timestamp),
             "nonce": nonce,
-            "expires_at": str(expires_at)
+            "expires_at": str(expires_at),
         }
 
         # 发送 multipart/form-data 请求
@@ -259,7 +267,7 @@ class WeChatClient:
                 files=files,
                 data=data,
                 headers=self._build_auth_headers(),
-                timeout=self.timeout
+                timeout=self.timeout,
             )
 
         resp_data = self._handle_response(response)
@@ -268,7 +276,8 @@ class WeChatClient:
             success=resp_data.get("success", False),
             message=resp_data.get("message", ""),
             media_id=resp_data.get("media_id"),
-            url=resp_data.get("url")
+            url=resp_data.get("url"),
+            error_code=resp_data.get("error_code"),
         )
 
     def list_materials(
@@ -276,7 +285,7 @@ class WeChatClient:
         account: Optional[str] = None,
         material_type: str = "image",
         offset: int = 0,
-        count: int = 20
+        count: int = 20,
     ) -> MaterialsListResult:
         """查询素材列表
 
@@ -297,14 +306,14 @@ class WeChatClient:
             "material_type": material_type,
             "timestamp": int(time.time()),
             "offset": offset,
-            "count": min(count, 20)
+            "count": min(count, 20),
         }
 
         response = self.session.post(
             url,
             json=payload,
             headers=self._build_auth_headers(),
-            timeout=self.timeout
+            timeout=self.timeout,
         )
 
         data = self._handle_response(response)
@@ -314,7 +323,8 @@ class WeChatClient:
             message=data.get("message", ""),
             total_count=data.get("total_count", 0),
             item_count=data.get("item_count", 0),
-            items=data.get("items", [])
+            items=data.get("items", []),
+            error_code=data.get("error_code"),
         )
 
     def render_markdown(self, request: RenderRequest) -> RenderResult:
@@ -327,15 +337,12 @@ class WeChatClient:
             渲染结果，包含 HTML 内容
         """
         url = f"{self.endpoint_base}/render/markdown"
-        payload = {
-            "content": request.content,
-            "theme": request.theme
-        }
+        payload = {"content": request.content, "theme": request.theme}
 
         response = self.session.post(
             url,
             json=payload,
-            timeout=self.timeout
+            timeout=self.timeout,
         )
 
         data = self._handle_response(response)
@@ -343,7 +350,8 @@ class WeChatClient:
         return RenderResult(
             success=data.get("success", False),
             html=data.get("html", ""),
-            message=data.get("message", "")
+            message=data.get("message", ""),
+            error_code=data.get("error_code"),
         )
 
     def render_html(self, content: str, theme: str = "default") -> RenderResult:
@@ -357,15 +365,12 @@ class WeChatClient:
             渲染结果
         """
         url = f"{self.endpoint_base}/render/html"
-        payload = {
-            "content": content,
-            "theme": theme
-        }
+        payload = {"content": content, "theme": theme}
 
         response = self.session.post(
             url,
             json=payload,
-            timeout=self.timeout
+            timeout=self.timeout,
         )
 
         data = self._handle_response(response)
@@ -373,5 +378,6 @@ class WeChatClient:
         return RenderResult(
             success=data.get("success", False),
             html=data.get("html", ""),
-            message=data.get("message", "")
+            message=data.get("message", ""),
+            error_code=data.get("error_code"),
         )

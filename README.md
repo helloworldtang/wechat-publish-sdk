@@ -40,6 +40,30 @@ if result.success:
     print(f"发布成功，draft_id: {result.draft_id}")
 ```
 
+### 发布判重与幂等
+
+服务端默认按账号、标题和正文判重。推荐为可重试的发布任务传入稳定业务键：
+
+```python
+result = client.publish_article(
+    PublishRequest(
+        title="测试文章",
+        content="# 内容",
+        idempotency_key="article-42:revision-3",
+    )
+)
+
+if result.duplicate_status == "processing":
+    print("相同内容正在发布")
+elif result.duplicate:
+    print(f"已跳过重复发布，draft_id: {result.draft_id}")
+else:
+    print(f"发布成功，draft_id: {result.draft_id}")
+```
+
+`idempotency_key` 最长 200 个字符，同一账号下不能用于不同的标题或正文。如果确实需要为相同内容创建新草稿，设置
+`force_publish=True`。
+
 ### 方式二：OIDC（`client_credentials`）
 
 适合需要标准 OAuth2 token 的场景。SDK 内置 OIDC 客户端，自动 discovery + 刷新。

@@ -1,8 +1,15 @@
-"""单元测试"""
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+"""WeChatClient 回归测试。"""
 
-from wechat_publish_sdk import WeChatClient, PublishRequest, ValidationError
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
+
+from wechat_publish_sdk import (
+    PublishRequest,
+    ValidationError,
+    WeChatClient,
+    WeChatPublishError,
+)
 from wechat_publish_sdk.exceptions import AccountNotFoundError
 from wechat_publish_sdk.oidc import OIDCConfig
 
@@ -83,7 +90,8 @@ class TestWeChatClient:
     def test_build_auth_headers_oidc(self):
         """OIDC 模式生成 Authorization: Bearer 头"""
         cfg = OIDCConfig(
-            client_id="cid", client_secret="sec",
+            client_id="cid",
+            client_secret="sec",
             token_endpoint="https://auth.ai-as.cc/token",
         )
         client = WeChatClient(base_url=BASE_URL, oidc=cfg)
@@ -111,6 +119,26 @@ class TestWeChatClient:
         assert kwargs["headers"]["X-API-Key"] == "sk_live_test"
 
     @patch("wechat_publish_sdk.client.requests.Session.post")
+    def test_publish_article_default_payload_is_backward_compatible(self, mock_post):
+        """默认请求体保留原字段且不发送未启用的判重选项。"""
+        mock_post.return_value = Mock(
+            status_code=200,
+            json=lambda: {"success": True, "message": "ok", "draft_id": "d1"},
+        )
+        client = WeChatClient(base_url=BASE_URL, api_key="k", default_account="account-a")
+
+        client.publish_article(PublishRequest(title="title", content="content"))
+
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["account"] == "account-a"
+        assert payload["content_format"] == "markdown"
+        assert payload["show_cover_pic"] == 1
+        assert payload["need_open_comment"] == 1
+        assert payload["only_fans_can_comment"] == 0
+        assert "idempotency_key" not in payload
+        assert "force_publish" not in payload
+
+    @patch("wechat_publish_sdk.client.requests.Session.post")
     def test_publish_article_with_cover(self, mock_post):
         """cover=ai 时 cover + cover_image_prompt 进 payload"""
         mock_post.return_value = Mock(
@@ -129,6 +157,81 @@ class TestWeChatClient:
         assert payload["cover_image_prompt"] == "极简几何封面"
 
     @patch("wechat_publish_sdk.client.requests.Session.post")
+    def test_publish_article_with_idempotency_options(self, mock_post):
+        """幂等键和强制发布透传到请求体"""
+        mock_post.return_value = Mock(
+            status_code=200,
+            json=lambda: {
+                "success": True,
+                "message": "发布成功",
+                "draft_id": "draft_new",
+                "duplicate": False,
+            },
+        )
+        client = WeChatClient(base_url=BASE_URL, api_key="k", default_account="t")
+
+        result = client.publish_article(
+            PublishRequest(
+                title="t",
+                content="c",
+                idempotency_key="article-42:revision-3",
+                force_publish=True,
+            )
+        )
+
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["idempotency_key"] == "article-42:revision-3"
+        assert kwargs["json"]["force_publish"] is True
+        assert result.duplicate is False
+
+    @patch("wechat_publish_sdk.client.requests.Session.post")
+    def test_publish_article_duplicate_succeeded(self, mock_post):
+        """已成功的重复请求返回原草稿和历史记录"""
+        mock_post.return_value = Mock(
+            status_code=200,
+            json=lambda: {
+                "success": True,
+                "message": "检测到重复内容，已跳过发布，与历史记录 #17 相同",
+                "draft_id": "draft_existing",
+                "duplicate": True,
+                "duplicate_of": 17,
+                "duplicate_status": "succeeded",
+            },
+        )
+        client = WeChatClient(base_url=BASE_URL, api_key="k", default_account="t")
+
+        result = client.publish_article(PublishRequest(title="t", content="c"))
+
+        assert result.success is True
+        assert result.draft_id == "draft_existing"
+        assert result.duplicate is True
+        assert result.duplicate_of == 17
+        assert result.duplicate_status == "succeeded"
+
+    @patch("wechat_publish_sdk.client.requests.Session.post")
+    def test_publish_article_duplicate_processing(self, mock_post):
+        """处理中的重复请求保留无草稿 ID 的状态语义"""
+        mock_post.return_value = Mock(
+            status_code=200,
+            json=lambda: {
+                "success": True,
+                "message": "相同内容正在发布中，已跳过重复请求",
+                "draft_id": None,
+                "duplicate": True,
+                "duplicate_status": "processing",
+            },
+        )
+        client = WeChatClient(base_url=BASE_URL, api_key="k", default_account="t")
+
+        result = client.publish_article(PublishRequest(title="t", content="c"))
+
+        assert result.success is True
+        assert result.draft_id is None
+        assert result.duplicate is True
+        assert result.duplicate_of is None
+        assert result.duplicate_status == "processing"
+
+    @patch("wechat_publish_sdk.client.requests.Session.post")
     def test_publish_article_with_oidc_bearer_header(self, mock_post):
         """OIDC 模式发布，请求携带 Authorization: Bearer"""
         mock_post.return_value = Mock(
@@ -136,7 +239,8 @@ class TestWeChatClient:
             json=lambda: {"success": True, "message": "ok", "draft_id": "d1"},
         )
         cfg = OIDCConfig(
-            client_id="cid", client_secret="sec",
+            client_id="cid",
+            client_secret="sec",
             token_endpoint="https://auth.ai-as.cc/token",
         )
         client = WeChatClient(
@@ -157,11 +261,34 @@ class TestWeChatClient:
             status_code=404,
             json=lambda: {"success": False, "message": "接口不存在"},
         )
-        client = WeChatClient(
-            base_url=BASE_URL, api_key="k", default_account="t"
-        )
+        client = WeChatClient(base_url=BASE_URL, api_key="k", default_account="t")
         with pytest.raises(AccountNotFoundError):
             client.publish_article(PublishRequest(title="测试", content="内容"))
+
+    @pytest.mark.parametrize(
+        ("status_code", "payload", "expected_message"),
+        [
+            (401, {"success": False, "message": "token 过期"}, r"认证失败 \(401\)"),
+            (500, {"success": False, "message": "database unavailable"}, "服务器错误"),
+            (400, {"success": False, "message": "bad request", "error_code": "E400"}, "E400"),
+        ],
+    )
+    def test_handle_json_error_responses(self, status_code, payload, expected_message):
+        """JSON 错误响应继续映射为 SDK 基础异常。"""
+        client = WeChatClient(base_url=BASE_URL, api_key="k")
+        response = Mock(status_code=status_code, text="response body", json=lambda: payload)
+
+        with pytest.raises(WeChatPublishError, match=expected_message):
+            client._handle_response(response)
+
+    def test_handle_non_json_validation_error(self):
+        """非 JSON 的 422 响应继续映射为参数校验异常。"""
+        client = WeChatClient(base_url=BASE_URL, api_key="k")
+        response = Mock(status_code=422, text="invalid payload")
+        response.json.side_effect = ValueError("not json")
+
+        with pytest.raises(ValidationError, match="参数格式错误"):
+            client._handle_response(response)
 
     def test_publish_article_validation_error(self):
         """空 title / 空 content 抛 ValidationError"""
@@ -178,6 +305,7 @@ class TestWeChatClient:
         client = WeChatClient(base_url=BASE_URL, api_key="k")
 
         from wechat_publish_sdk import UploadRequest
+
         with pytest.raises(ValidationError):
             client.upload_image(
                 UploadRequest(account="test", file_path="/nonexistent/file.jpg")
